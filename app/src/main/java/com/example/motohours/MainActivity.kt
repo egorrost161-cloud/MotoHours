@@ -1,7 +1,5 @@
 package com.example.motohours
 
-import android.app.AppOpsManager
-import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.net.Uri
@@ -38,6 +36,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         LogWriter.init(this)
+
+        // ЗАПУСКАЕМ СЕРВИС ПРИ ОТКРЫТИИ ПРИЛОЖЕНИЯ
+        startHoursService()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -114,6 +115,7 @@ class MainActivity : AppCompatActivity() {
                             "Счётчик обнулён",
                             Toast.LENGTH_SHORT
                         ).show()
+                        updateUi()
                     }
                     .setNegativeButton("Отмена", null)
                     .show()
@@ -183,6 +185,7 @@ class MainActivity : AppCompatActivity() {
                     "Пороги сохранены",
                     Toast.LENGTH_SHORT
                 ).show()
+                updateUi()
             }
         })
 
@@ -267,7 +270,7 @@ class MainActivity : AppCompatActivity() {
         // Первое обновление
         updateUi()
 
-        // Запускаем периодическое обновление UI (каждую секунду)
+        // Периодическое обновление UI
         uiRunnable = object : Runnable {
             override fun run() {
                 updateUi()
@@ -275,6 +278,24 @@ class MainActivity : AppCompatActivity() {
             }
         }
         handler.postDelayed(uiRunnable!!, UI_UPDATE_MS)
+    }
+
+    /**
+     * Запускает сервис подсчёта моточасов.
+     * Вызывается при каждом открытии MainActivity.
+     */
+    private fun startHoursService() {
+        try {
+            val svc = Intent(this, HoursService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(svc)
+            } else {
+                startService(svc)
+            }
+            LogWriter.log("MainActivity запустил HoursService")
+        } catch (e: Exception) {
+            LogWriter.log("Ошибка запуска сервиса: ${e.message}")
+        }
     }
 
     override fun onResume() {
@@ -294,7 +315,6 @@ class MainActivity : AppCompatActivity() {
         val lastStart = prefs.getLong("last_start_time", 0L)
         val th2 = prefs.getLong("threshold_2", HoursService.DEFAULT_THRESHOLD_2)
 
-        // Текущее значение
         val currentMs = if (lastStart > 0) {
             totalMs + (System.currentTimeMillis() - lastStart)
         } else {
@@ -303,14 +323,12 @@ class MainActivity : AppCompatActivity() {
 
         hoursText.text = HoursService.formatMs(currentMs)
 
-        // Статус сервиса
         statusText.text = if (lastStart > 0) {
             "Статус сервиса: РАБОТАЕТ"
         } else {
             "Статус сервиса: ОСТАНОВЛЕН"
         }
 
-        // До замены
         val th2Ms = th2 * 3600000L
         val remaining = th2Ms - currentMs
         if (remaining > 0) {
