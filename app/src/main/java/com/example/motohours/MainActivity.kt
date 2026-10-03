@@ -7,6 +7,8 @@ import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
@@ -24,9 +26,14 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         const val PREFS_NAME = "motohours"
+        const val UI_UPDATE_MS = 1000L
     }
 
     private lateinit var hoursText: TextView
+    private lateinit var statusText: TextView
+    private lateinit var thresholdText: TextView
+    private val handler = Handler(Looper.getMainLooper())
+    private var uiRunnable: Runnable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -47,7 +54,7 @@ class MainActivity : AppCompatActivity() {
 
         // ===== Главная цифра =====
         hoursText = TextView(this).apply {
-            textSize = 48f
+            textSize = 44f
             gravity = Gravity.CENTER
             setPadding(0, 40, 0, 40)
         }
@@ -63,20 +70,14 @@ class MainActivity : AppCompatActivity() {
         })
 
         // ===== Статус =====
-        root.addView(TextView(this).apply {
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setPadding(0, 20, 0, 8)
-        })
-
-        val statusText = TextView(this).apply {
+        statusText = TextView(this).apply {
             textSize = 16f
             gravity = Gravity.CENTER
             setPadding(0, 8, 0, 8)
         }
         root.addView(statusText)
 
-        val thresholdText = TextView(this).apply {
+        thresholdText = TextView(this).apply {
             textSize = 16f
             gravity = Gravity.CENTER
             setPadding(0, 8, 0, 30)
@@ -113,7 +114,6 @@ class MainActivity : AppCompatActivity() {
                             "Счётчик обнулён",
                             Toast.LENGTH_SHORT
                         ).show()
-                        updateUi()
                     }
                     .setNegativeButton("Отмена", null)
                     .show()
@@ -183,7 +183,6 @@ class MainActivity : AppCompatActivity() {
                     "Пороги сохранены",
                     Toast.LENGTH_SHORT
                 ).show()
-                updateUi()
             }
         })
 
@@ -199,9 +198,8 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 10, 0, 10)
         })
         settingsContent.addView(Button(this).apply {
-            text = "🔔 Проверить всплывающие окна"
+            text = "Проверить всплывающие окна"
             setOnClickListener {
-                // Проверка разрешения
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     if (!Settings.canDrawOverlays(this@MainActivity)) {
                         Toast.makeText(
@@ -234,7 +232,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 10, 0, 10)
         })
         settingsContent.addView(Button(this).apply {
-            text = "📄 Показать последние 30 строк"
+            text = "Показать последние 30 строк"
             setOnClickListener {
                 val text = LogWriter.readLog()
                 if (text.isEmpty() || text == "Лог пуст — событий ещё не было") {
@@ -250,7 +248,7 @@ class MainActivity : AppCompatActivity() {
             }
         })
         settingsContent.addView(Button(this).apply {
-            text = "🗑 Очистить лог"
+            text = "Очистить лог"
             setOnClickListener {
                 LogWriter.clearLog()
                 Toast.makeText(this@MainActivity, "Лог очищен", Toast.LENGTH_SHORT).show()
@@ -263,16 +261,31 @@ class MainActivity : AppCompatActivity() {
         outerScroll.addView(root)
         setContentView(outerScroll)
 
-        // Обновить UI
-        updateUi()
-
         // Проверка разрешения при старте
         checkOverlayPermission()
+
+        // Первое обновление
+        updateUi()
+
+        // Запускаем периодическое обновление UI (каждую секунду)
+        uiRunnable = object : Runnable {
+            override fun run() {
+                updateUi()
+                handler.postDelayed(this, UI_UPDATE_MS)
+            }
+        }
+        handler.postDelayed(uiRunnable!!, UI_UPDATE_MS)
     }
 
     override fun onResume() {
         super.onResume()
         updateUi()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        uiRunnable?.let { handler.removeCallbacks(it) }
+        uiRunnable = null
     }
 
     private fun updateUi() {
@@ -281,7 +294,7 @@ class MainActivity : AppCompatActivity() {
         val lastStart = prefs.getLong("last_start_time", 0L)
         val th2 = prefs.getLong("threshold_2", HoursService.DEFAULT_THRESHOLD_2)
 
-        // Текущее значение: total + (now - lastStart), если отсчёт идёт
+        // Текущее значение
         val currentMs = if (lastStart > 0) {
             totalMs + (System.currentTimeMillis() - lastStart)
         } else {
@@ -290,11 +303,20 @@ class MainActivity : AppCompatActivity() {
 
         hoursText.text = HoursService.formatMs(currentMs)
 
+        // Статус сервиса
+        statusText.text = if (lastStart > 0) {
+            "Статус сервиса: РАБОТАЕТ"
+        } else {
+            "Статус сервиса: ОСТАНОВЛЕН"
+        }
+
         // До замены
         val th2Ms = th2 * 3600000L
         val remaining = th2Ms - currentMs
         if (remaining > 0) {
-            (findViewById<TextView>(android.R.id.content)?.let { null }) ?: Unit
+            thresholdText.text = "До замены масла: ${HoursService.formatMs(remaining)}"
+        } else {
+            thresholdText.text = "ПОРА МЕНЯТЬ МАСЛО!"
         }
     }
 
